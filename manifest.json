@@ -1,0 +1,23 @@
+{
+    "background": {
+        "service_worker": "sw.js"
+    },
+    "action": {
+        "default_icon": "icon-enabled.png",
+        "default_popup": "popup/popup.html"
+    },
+    "icons": {
+        "128": "icon-128-enabled.png",
+        "32": "icon-enabled.png"
+    },
+    "manifest_version": 3,
+	"minimum_chrome_version": "104.0.0.0",
+    "name": "UzelProxy - обход блокировки сайтов",
+    "short_name": "UzelProxy",
+    "description": "Расширение позволяет беспрепятственно заходить на заблокированные сайты.",
+    "homepage_url": "https://example.com",
+    "permissions": ["proxy", "tabs", "webRequest", "storage", "unlimitedStorage", "alarms", "scripting"],
+	"host_permissions": ["<all_urls>"],
+	"optional_permissions": ["management"],
+    "version": "7.0.4"
+}

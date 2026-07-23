@@ -1,0 +1,1 @@
+(()=>{function e(){document.getElementById("settings").onclick=()=>{chrome.tabs.create({url:`chrome://extensions/?id=${chrome.runtime.id}`})}}e()})()

@@ -1,0 +1,13 @@
+# OS / редакторы
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Временные файлы
+*.log
+*.tmp
+node_modules/
