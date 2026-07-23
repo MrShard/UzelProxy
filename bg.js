@@ -254,6 +254,77 @@ function buildPac(o) {
 }`;
 }
 
+// ============================================================================
+//  Проверка соединения прокси: временно ставим PAC с тестируемым прокси,
+//  делаем fetch к cdn-cgi/trace (отдаёт ip=... loc=...), затем ВСЕГДА
+//  восстанавливаем нормальный PAC. За время проверки трафик браузера идёт
+//  через тестируемый прокси — сознательный trade-off (см. тултип в UI).
+//  Возвращает { ok, ip, country, error }.
+// ============================================================================
+const PROBE_URL = "https://www.cloudflare.com/cdn-cgi/trace";
+const PROBE_TIMEOUT_MS = 8000;
+
+async function checkProxy(type, host, port) {
+    // 1. Установка временного PAC: весь трафик через тестируемый прокси.
+    const probePac =
+        `function FindProxyForURL(url, host){return '${type} ${host}:${port};'}`;
+    const probeValue = { mode: "pac_script", pacScript: { data: probePac } };
+
+    const setProbe = () => new Promise(resolve => {
+        // dummy-DIRECT захватывает контроль, затем ставим проверочный PAC.
+        chrome.proxy.settings.set({
+            value: { mode: "pac_script", pacScript: { data: `function FindProxyForURL(url, host){return 'DIRECT';}` } }
+        }, () => {
+            chrome.proxy.settings.get({}, s => {
+                if (s.levelOfControl === "controlled_by_this_extension") {
+                    chrome.proxy.settings.set({ value: probeValue }, () => resolve(true));
+                } else {
+                    resolve(false);
+                }
+            });
+        });
+    });
+
+    const controlled = await setProbe();
+    if (!controlled) {
+        await applyPac();
+        return { ok: false, error: "controlled_by_other" };
+    }
+
+    // 2. fetch с таймаутом.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+    try {
+        const resp = await fetch(PROBE_URL, {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal
+        });
+        if (!resp.ok) {
+            return { ok: false, error: "http_" + resp.status };
+        }
+        const text = await resp.text();
+        const parsed = parseTrace(text);
+        return { ok: true, ip: parsed.ip, country: parsed.country, error: null };
+    } catch (e) {
+        if (e?.name === "AbortError") return { ok: false, error: "timeout" };
+        return { ok: false, error: "network" };
+    } finally {
+        clearTimeout(timer);
+        await applyPac();            // ВСЕГДА восстанавливаем нормальный PAC
+    }
+}
+
+// Парсинг ответа cdn-cgi/trace: строки вида "ip=1.2.3.4", "loc=RU".
+function parseTrace(text) {
+    const map = {};
+    text.split(/\r?\n/).forEach(line => {
+        const idx = line.indexOf("=");
+        if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    });
+    return { ip: map.ip || null, country: map.loc || map.country || null };
+}
+
 async function applyPac() {
     chrome.proxy.settings.clear({});
     if (!(await hasAllUrls())) {
@@ -439,6 +510,10 @@ function onMessage(msg, _sender, sendResponse) {
             const s = await get(["gitDomains", "dtime", "useGitList"]);
             const count = Array.isArray(s.gitDomains) ? s.gitDomains.length : 0;
             sendResponse({ count, dtime: s.dtime || null, useGitList: !!s.useGitList });
+        } else if (msg?.apply === "checkProxy") {
+            // Проверка соединения конкретного прокси (PAC + fetch + откат).
+            const result = await checkProxy(msg.type, msg.host, msg.port);
+            sendResponse(result);
         }
     })();
     return true;
