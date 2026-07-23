@@ -22,6 +22,10 @@
 // нет rate-limit как у raw.githubusercontent.
 const BLOCKLIST_URL = "https://cdn.jsdelivr.net/gh/MrShard/UzelProxy@main/blocklist.txt";
 
+// Источник последней версии расширения. Кнопка «Проверить обновление» в экране
+// «Управление» сравнивает установленную версию со значением version из этого файла.
+const VERSION_URL = "https://cdn.jsdelivr.net/gh/MrShard/UzelProxy@main/version.json";
+
 const WEEK_MINUTES = 10080;             // период обновления списка / интервал аларма
 const TTL_MS = WEEK_MINUTES * 60 * 1000;
 
@@ -82,33 +86,38 @@ async function disableConflictingExtensions() {
 
 // ============================================================================
 //  Загрузка и кеширование списка исключений из git
+//  force=true — игнорировать TTL-кеш и обновить по запросу (кнопка «Обновить список»).
+//  Возвращает { ok, count, dtime, error } для отчёта в UI.
 // ============================================================================
 let fetchInFlight = false;
 
 async function fetchGitList(force) {
     const b = await get(["dtime", "gitDomains"]);
+    const prevCount = Array.isArray(b.gitDomains) ? b.gitDomains.length : 0;
 
     // Недельный TTL-гейт: если список свежий — просто применяем кеш.
     if (!force && b.dtime && (Date.now() - new Date(b.dtime).getTime() < TTL_MS)) {
         applyPac();
-        return;
+        return { ok: true, count: prevCount, dtime: b.dtime, error: null, cached: true };
     }
-    if (fetchInFlight) return;
+    if (fetchInFlight) {
+        return { ok: false, count: prevCount, dtime: b.dtime, error: "inflight", cached: true };
+    }
     fetchInFlight = true;
 
     try {
         const resp = await fetch(BLOCKLIST_URL, {
             method: "GET",
-            headers: new Headers({ "If-Modified-Since": b.dtime || epochUTC() })
+            headers: new Headers({ "If-Modified-Since": b.dtime || epochUTC(), "Cache-Control": "no-cache" })
         });
         if (resp.status === 304) {           // список не изменился
             await set({ dtime: nowUTC() });
             applyPac();
-            return;
+            return { ok: true, count: prevCount, dtime: nowUTC(), error: null, unchanged: true };
         }
         if (!resp.ok) {                      // прочие ошибки — работаем на кеше
             applyPac();
-            return;
+            return { ok: false, count: prevCount, dtime: b.dtime, error: "http_" + resp.status };
         }
         const text = await resp.text();
         const domains = text.split(/\r?\n/)
@@ -116,11 +125,51 @@ async function fetchGitList(force) {
             .filter(s => s && !s.startsWith("#") && /^[a-zA-Z0-9.*-]+$/.test(s));
         await set({ gitDomains: domains, dtime: nowUTC() });
         applyPac();
+        return { ok: true, count: domains.length, dtime: nowUTC(), error: null };
     } catch (e) {                            // сеть недоступна — оставляем кеш
         applyPac();
+        return { ok: false, count: prevCount, dtime: b.dtime, error: "network" };
     } finally {
         fetchInFlight = false;
     }
+}
+
+// ============================================================================
+//  Проверка обновления расширения по version.json
+//  Возвращает { current, latest, hasUpdate, url, notes, error }.
+// ============================================================================
+async function checkVersion() {
+    const current = chrome.runtime.getManifest().version;
+    try {
+        const resp = await fetch(VERSION_URL, {
+            method: "GET",
+            headers: new Headers({ "Cache-Control": "no-cache" })
+        });
+        if (!resp.ok) return { current, error: "http_" + resp.status };
+        const data = await resp.json();
+        const latest = data.version;
+        const hasUpdate = compareVersions(latest, current) > 0;
+        return {
+            current, latest, hasUpdate,
+            url: data.url || "https://github.com/MrShard/UzelProxy/releases/latest",
+            notes: data.notes || null,
+            error: null
+        };
+    } catch (e) {
+        return { current, error: "network" };
+    }
+}
+
+// Сравнение семантических версий: >0 если a новее b, <0 если старее, 0 при равенстве.
+function compareVersions(a, b) {
+    const pa = String(a).split(".").map(Number);
+    const pb = String(b).split(".").map(Number);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+        const da = pa[i] || 0, db = pb[i] || 0;
+        if (da !== db) return da - db;
+    }
+    return 0;
 }
 
 // ============================================================================
@@ -377,6 +426,19 @@ function onMessage(msg, _sender, sendResponse) {
             sendResponse();
         } else if (msg?.apply === "err") {
             sendResponse({ ext: await getLevelOfControl() });
+        } else if (msg?.apply === "updateList") {
+            // Ручное обновление списка исключений (кнопка «Обновить список»).
+            const result = await fetchGitList(true);
+            sendResponse(result);
+        } else if (msg?.apply === "checkUpdate") {
+            // Проверка обновления расширения по version.json.
+            const result = await checkVersion();
+            sendResponse(result);
+        } else if (msg?.apply === "listInfo") {
+            // Текущее состояние списка для экрана «Управление».
+            const s = await get(["gitDomains", "dtime", "useGitList"]);
+            const count = Array.isArray(s.gitDomains) ? s.gitDomains.length : 0;
+            sendResponse({ count, dtime: s.dtime || null, useGitList: !!s.useGitList });
         }
     })();
     return true;
