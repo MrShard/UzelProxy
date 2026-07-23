@@ -9,9 +9,40 @@ function s(e){chrome.tabs.create({url:e})}
 // Сообщение в попап. color: зелёный #15a535 / красный #d00 / синий #1959a6.
 function showMsg(id,msg,color){const el=e(id);if(!el)return;el.style.color=color||'#39393a';el.innerText=msg}
 
-async function o(){const{isEnabled:s,disableExtensions:o}=await a(["isEnabled","disableExtensions"]);chrome.runtime.sendMessage({apply:"err"},i=>{i.ext=="controlled_by_other_extensions"&&s?chrome.action.getBadgeText({},t=>{(t==="err"||t=="")&&!o&&(e("on_off_switcher").disabled=!0,e("control").style.display="none",e("share").style.display="none",e("noControl").style.display="block",r("../icon-128-disabled.png","err"))}):(e("on_off_switcher").disabled=!1,e("noControl").style.display="none",e("control").style.display="initial",e("share").style.display="table"),s?(t.checked=!0,n.style.animation="",n.style["box-shadow"]="inset 0px 0px 15px 10px rgb(34, 29, 136)"):(t.checked=!1,n.style.animation="stop",n.style["box-shadow"]="none")})}
+// Текущий активный прокси для отображения на главном экране.
+async function renderActiveProxy(){
+    const d=await a(["proxies","activeProxyId"]);
+    const el=e("active_proxy_info");
+    if(!el)return;
+    const list=Array.isArray(d.proxies)?d.proxies:[];
+    const active=list.find(p=>p.id===d.activeProxyId);
+    if(active){
+        const tname=active.type==="SOCKS5"?"SOCKS5":"HTTP/S";
+        el.innerHTML='Активен: <b>'+(active.name||tname+' '+active.host+':'+active.port)+'</b><br><span class=ap-addr>'+tname+' · '+active.host+':'+active.port+'</span>';
+        el.style.display="block";
+    }else{
+        el.innerHTML='Прокси не выбран. Добавьте его в <a href=# id=go_proxy_mgr class=ap-link>Менеджере прокси</a>.';
+        el.style.display="block";
+        const lk=e("go_proxy_mgr");if(lk)lk.onclick=(ev)=>{ev.preventDefault();e("proxy_btn").onclick()};
+    }
+}
 
-async function c(){t.addEventListener("change",()=>{i({isEnabled:t.checked}),chrome.action.setBadgeText({text:""}),o(),chrome.runtime.sendMessage({apply:"rebuild"})})}
+async function o(){const{isEnabled:s,disableExtensions:o}=await a(["isEnabled","disableExtensions"]);chrome.runtime.sendMessage({apply:"err"},i=>{i.ext=="controlled_by_other_extensions"&&s?chrome.action.getBadgeText({},t=>{(t==="err"||t=="")&&!o&&(e("on_off_switcher").disabled=!0,e("control").style.display="none",e("share").style.display="none",e("noControl").style.display="block",r("../icon-128-disabled.png","err"))}):(e("on_off_switcher").disabled=!1,e("noControl").style.display="none",e("control").style.display="initial",e("share").style.display="table"),s?(t.checked=!0,n.style.animation="",n.style["box-shadow"]="inset 0px 0px 15px 10px rgb(34, 29, 136)"):(t.checked=!1,n.style.animation="stop",n.style["box-shadow"]="none")});renderActiveProxy()}
+
+async function c(){t.addEventListener("change",async()=>{
+    // Защита: нельзя включить без активного прокси.
+    if(t.checked){
+        const d=await a(["activeProxyId"]);
+        if(!d.activeProxyId){
+            t.checked=false;
+            i({isEnabled:false});
+            const nc=e("noControl");if(nc){nc.style.display="block",nc.innerHTML='Сначала добавьте прокси в <a href=# id=go_mgr class=nc-link>Менеджере прокси</a>.',nc.title=""}
+            const lk=e("go_mgr");if(lk)lk.onclick=(ev)=>{ev.preventDefault();e("proxy_btn").onclick()};
+            return;
+        }
+    }
+    i({isEnabled:t.checked}),chrome.action.setBadgeText({text:""}),o(),chrome.runtime.sendMessage({apply:"rebuild"})
+})}
 
 function fmtDate(dtime){try{return dtime?new Date(dtime).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}catch{return dtime||"—"}}
 
@@ -177,10 +208,10 @@ function bindProxyMgr(){
     e("pm_add_btn").onclick=()=>addProxy();
 }
 
-function l(){e("vk").onclick=()=>{u()},e("ok").onclick=()=>{h()},e("fb").onclick=()=>{m()},e("settings").onclick=()=>{e("main").style.display="none",e("manage").style.display="none",e("proxyMgr").style.display="none",e("opt").style.display="block"},e("support").onclick=()=>{d()},e("support_email").onclick=()=>{e("e_mail_address").style.display="table"},e("p_email").onclick=()=>{e("e_mail_address").style.display="table"},e("support_vk").onclick=()=>{s("https://example.com")},e("p_vk").onclick=()=>{s("https://example.com")},e("system").onclick=()=>{s("chrome://settings/system")}}
+function l(){e("vk").onclick=()=>{u()},e("ok").onclick=()=>{h()},e("fb").onclick=()=>{m()},e("settings").onclick=()=>{e("main").style.display="none",e("manage").style.display="none",e("proxyMgr").style.display="none",e("opt").style.display="block"};e("opt_back").onclick=()=>{e("opt").style.display="none",e("main").style.display="block"},e("support").onclick=()=>{d()},e("support_email").onclick=()=>{e("e_mail_address").style.display="table"},e("p_email").onclick=()=>{e("e_mail_address").style.display="table"},e("support_vk").onclick=()=>{s("https://github.com/MrShard/UzelProxy")},e("p_vk").onclick=()=>{s("https://github.com/MrShard/UzelProxy")},e("system").onclick=()=>{s("chrome://extensions")}}
 function d(){const t=e("bottom_open").style,n=e("e_mail_address").style;t.display=="table"?(t.display="none",n.display="none"):(t.display="table",n.display="none")}
-function u(){window.open(`https://vk.com/share.php?url=https://example.com/?utm_source=from_vk&title=UzelProxy&description=Гибкое управление личными прокси в браузере.`,"","menubar=no,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
-function h(){window.open(`https://connect.ok.ru/offer?url=https://example.com/?utm_source=from_ok&title=UzelProxy&description=Гибкое управление личными прокси в браузере.`,"","menubar=no,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
-function m(){window.open(`https://www.facebook.com/sharer.php?u=https://example.com/?utm_source=from_facebook&title=UzelProxy`,"","menubar=no,sharer,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
+function u(){window.open(`https://vk.com/share.php?url=https://github.com/MrShard/UzelProxy/?utm_source=from_vk&title=UzelProxy&description=Гибкое управление личными прокси в браузере.`,"","menubar=no,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
+function h(){window.open(`https://connect.ok.ru/offer?url=https://github.com/MrShard/UzelProxy/?utm_source=from_ok&title=UzelProxy&description=Гибкое управление личными прокси в браузере.`,"","menubar=no,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
+function m(){window.open(`https://www.facebook.com/sharer.php?u=https://github.com/MrShard/UzelProxy/?utm_source=from_facebook&title=UzelProxy`,"","menubar=no,sharer,toolbar=no,resizable=yes,scrollbars=yes,height=600,width=600")}
 function f(){o(),c(),l(),bindManage(),bindProxyMgr()}
 f()})()

@@ -90,10 +90,11 @@ async function disableConflictingExtensions() {
 //  Возвращает { ok, count, dtime, error } для отчёта в UI.
 // ============================================================================
 let fetchInFlight = false;
+let checkInFlight = false;
 
 async function fetchGitList(force) {
-    const b = await get(["dtime", "gitDomains"]);
-    const prevCount = Array.isArray(b.gitDomains) ? b.gitDomains.length : 0;
+    const b = await get(["dtime", "gitTrie", "gitDomainsCount"]);
+    const prevCount = b.gitDomainsCount || 0;
 
     // Недельный TTL-гейт: если список свежий — просто применяем кеш.
     if (!force && b.dtime && (Date.now() - new Date(b.dtime).getTime() < TTL_MS)) {
@@ -123,7 +124,9 @@ async function fetchGitList(force) {
         const domains = text.split(/\r?\n/)
             .map(s => s.trim())
             .filter(s => s && !s.startsWith("#") && /^[a-zA-Z0-9.*-]+$/.test(s));
-        await set({ gitDomains: domains, dtime: nowUTC() });
+        // Строим trie один раз при загрузке → поиск O(длина домена), храним компактно (~11KB).
+        const trie = buildTrieFromList(domains);
+        await set({ gitTrie: trie, gitDomainsCount: domains.length, dtime: nowUTC() });
         applyPac();
         return { ok: true, count: domains.length, dtime: nowUTC(), error: null };
     } catch (e) {                            // сеть недоступна — оставляем кеш
@@ -174,81 +177,66 @@ function compareVersions(a, b) {
 
 // ============================================================================
 //  Построение и применение PAC
+// ----------------------------------------------------------------------------
+//  Списки доменов хранятся как trie (префиксное дерево по развёрнутым меткам):
+//  {"ru":{"yandex":{"_":1,"mail":{"_":1}}}}. Поиск O(длина домена) вместо O(n).
+//  Маркер "_" на узле = совпадение (домен или *.родитель в списке).
 // ============================================================================
+function buildTrieFromList(domains) {
+    const trie = {};
+    if (!Array.isArray(domains)) return trie;
+    for (const raw of domains) {
+        const d = String(raw).toLowerCase().trim();
+        if (!d) continue;
+        const labels = d.replace(/^\*\./, "").split(".").reverse();
+        let node = trie;
+        for (const l of labels) {
+            if (!l) continue;
+            if (!node[l]) node[l] = {};
+            node = node[l];
+        }
+        node._ = 1; // маркер совпадения; wildcard: родитель в списке → любой поддомен
+    }
+    return trie;
+}
+
 function buildPac(o) {
     // o.userProxyString — bare-директива вида "PROXY 1.2.3.4:8080;" (без кавычек)
+    // o.gitTrie / noProxyTrie / onlyProxyTrie / addProxyTrie — сериализованные trie-объекты.
     return `function FindProxyForURL(url, host) {
-\tconst GIT_ARRAY             = ${JSON.stringify(o.gitDomains)};
-\tconst USER_OWN_PROXY        = ${o.userProxy};
-\tconst USER_OWN_PROXY_STRING = ${JSON.stringify(o.userProxyString)};
-\tconst USER_NO_PROXY         = ${o.noProxy};
-\tconst USER_ONLY_PROXY       = ${o.onlyProxy};
-\tconst USER_ADD_PROXY        = ${o.addProxy};
-\tconst USER_ALL_PROXY        = ${o.allProxy};
-\tconst USER_NO_PROXY_ARRAY   = ${JSON.stringify(o.noProxyDomains)};
-\tconst USER_ONLY_PROXY_ARRAY = ${JSON.stringify(o.onlyProxyDomains)};
-\tconst USER_ADD_PROXY_ARRAY  = ${JSON.stringify(o.addProxyDomains)};
-
+\tconst GIT_TRIE        = ${JSON.stringify(o.gitTrie)};
+\tconst NOPROXY_TRIE    = ${JSON.stringify(o.noProxyTrie)};
+\tconst ONLYPROXY_TRIE  = ${JSON.stringify(o.onlyProxyTrie)};
+\tconst ADDPROXY_TRIE   = ${JSON.stringify(o.addProxyTrie)};
+\tconst USER_OWN_PROXY  = ${o.userProxy};
+\tconst PROXY_STR       = ${JSON.stringify(o.userProxyString)};
+\tconst NO_PROXY        = ${o.noProxy};
+\tconst ONLY_PROXY      = ${o.onlyProxy};
+\tconst ADD_PROXY       = ${o.addProxy};
+\tconst ALL_PROXY       = ${o.allProxy};
+\tfunction inList(h, trie){
+\t\tconst labels = h.split(".");
+\t\tlet node = trie;
+\t\tfor (let i = labels.length - 1; i >= 0; i--) {
+\t\t\tif (node._) return true;          // родитель в списке → поддомен тоже (wildcard)
+\t\t\tnode = node[labels[i]];
+\t\t\tif (!node) return false;
+\t\t}
+\t\treturn !!(node && node._);
+\t}
 \t// 1. готовые исключения из git-списка → напрямую
-\tif (GIT_ARRAY && GIT_ARRAY.length > 0) {
-\t\tfor (let i in GIT_ARRAY) {
-\t\t\tif (GIT_ARRAY[i] == host) return 'DIRECT';
-\t\t\tif (GIT_ARRAY[i][0] == '*') {
-\t\t\t\tlet length = -1 * (GIT_ARRAY[i].length - 2);
-\t\t\t\tif (GIT_ARRAY[i].substr(length) == host) return 'DIRECT';
-\t\t\t\tlength = -1 * (GIT_ARRAY[i].length - 1);
-\t\t\t\tif (GIT_ARRAY[i].substr(length) == host.substr(length)) return 'DIRECT';
-\t\t\t}
-\t\t}
-\t}
+\tif (inList(host, GIT_TRIE)) return 'DIRECT';
 \t// 2. пользовательские исключения → напрямую
-\tif (USER_NO_PROXY) {
-\t\tif (USER_NO_PROXY_ARRAY && USER_NO_PROXY_ARRAY.length > 0) {
-\t\t\tfor (let i in USER_NO_PROXY_ARRAY) {
-\t\t\t\tif (USER_NO_PROXY_ARRAY[i] == host) return 'DIRECT';
-\t\t\t\tif (USER_NO_PROXY_ARRAY[i][0] == '*') {
-\t\t\t\t\tlet length = -1 * (USER_NO_PROXY_ARRAY[i].length - 2);
-\t\t\t\t\tif (USER_NO_PROXY_ARRAY[i].substr(length) == host) return 'DIRECT';
-\t\t\t\t\tlength = -1 * (USER_NO_PROXY_ARRAY[i].length - 1);
-\t\t\t\t\tif (USER_NO_PROXY_ARRAY[i].substr(length) == host.substr(length)) return 'DIRECT';
-\t\t\t\t}
-\t\t\t}
-\t\t}
-\t}
+\tif (NO_PROXY && inList(host, NOPROXY_TRIE)) return 'DIRECT';
 \t// 3. проксировать только домены из списка (остальное напрямую)
-\tif (USER_ONLY_PROXY && USER_OWN_PROXY) {
-\t\tif (USER_ONLY_PROXY_ARRAY && USER_ONLY_PROXY_ARRAY.length > 0) {
-\t\t\tfor (let i in USER_ONLY_PROXY_ARRAY) {
-\t\t\t\tif (USER_ONLY_PROXY_ARRAY[i] == host) return USER_OWN_PROXY_STRING;
-\t\t\t\telse if (USER_ONLY_PROXY_ARRAY[i][0] == '*') {
-\t\t\t\t\tlet length = -1 * (USER_ONLY_PROXY_ARRAY[i].length - 2);
-\t\t\t\t\tif (USER_ONLY_PROXY_ARRAY[i].substr(length) == host) return USER_OWN_PROXY_STRING;
-\t\t\t\t\tlength = -1 * (USER_ONLY_PROXY_ARRAY[i].length - 1);
-\t\t\t\t\tif (USER_ONLY_PROXY_ARRAY[i].substr(length) == host.substr(length)) return USER_OWN_PROXY_STRING;
-\t\t\t\t\telse return 'DIRECT';
-\t\t\t\t}
-\t\t\t\telse return 'DIRECT';
-\t\t\t}
-\t\t}
+\tif (ONLY_PROXY && USER_OWN_PROXY) {
+\t\tif (inList(host, ONLYPROXY_TRIE)) return PROXY_STR;
+\t\treturn 'DIRECT';
 \t}
 \t// 4. добавить домены к проксируемым (аддитивно)
-\tif (USER_ADD_PROXY && USER_OWN_PROXY) {
-\t\tif (USER_ADD_PROXY_ARRAY && USER_ADD_PROXY_ARRAY.length > 0) {
-\t\t\tfor (let i in USER_ADD_PROXY_ARRAY) {
-\t\t\t\tif (USER_ADD_PROXY_ARRAY[i] == host) return USER_OWN_PROXY_STRING;
-\t\t\t\tif (USER_ADD_PROXY_ARRAY[i][0] == '*') {
-\t\t\t\t\tlet length = -1 * (USER_ADD_PROXY_ARRAY[i].length - 2);
-\t\t\t\t\tif (USER_ADD_PROXY_ARRAY[i].substr(length) == host) return USER_OWN_PROXY_STRING;
-\t\t\t\t\tlength = -1 * (USER_ADD_PROXY_ARRAY[i].length - 1);
-\t\t\t\t\tif (USER_ADD_PROXY_ARRAY[i].substr(length) == host.substr(length)) return USER_OWN_PROXY_STRING;
-\t\t\t\t}
-\t\t\t}
-\t\t}
-\t}
+\tif (ADD_PROXY && USER_OWN_PROXY && inList(host, ADDPROXY_TRIE)) return PROXY_STR;
 \t// 5. проксировать весь трафик (режим VPN)
-\tif (USER_ALL_PROXY && USER_OWN_PROXY) {
-\t\treturn USER_OWN_PROXY_STRING;
-\t}
+\tif (ALL_PROXY && USER_OWN_PROXY) return PROXY_STR;
 \t// 6. по умолчанию: напрямую (вшитого прокси нет)
 \treturn 'DIRECT';
 }`;
@@ -265,7 +253,19 @@ const PROBE_URL = "https://www.cloudflare.com/cdn-cgi/trace";
 const PROBE_TIMEOUT_MS = 8000;
 
 async function checkProxy(type, host, port) {
+    // Sanitize: разрешаем только безопасные символы, иначе отказ (защита от инъекции в PAC).
+    const safeHost = /^[A-Za-z0-9.\-]+$/.test(host) && host.length < 255;
+    const safePort = /^[0-9]{1,5}$/.test(String(port)) && +port > 0 && +port <= 65535;
+    const safeType = type === "PROXY" || type === "SOCKS5" || type === "SOCKS" || type === "HTTPS";
+    if (!safeHost || !safePort || !safeType) {
+        return { ok: false, error: "invalid" };
+    }
+    // Защита от параллельных проверок (race на chrome.proxy.settings).
+    if (checkInFlight) return { ok: false, error: "inflight" };
+    checkInFlight = true;
+
     // 1. Установка временного PAC: весь трафик через тестируемый прокси.
+    // Данные безопасны после sanitize — интерполяция допустима.
     const probePac =
         `function FindProxyForURL(url, host){return '${type} ${host}:${port};'}`;
     const probeValue = { mode: "pac_script", pacScript: { data: probePac } };
@@ -311,6 +311,7 @@ async function checkProxy(type, host, port) {
         return { ok: false, error: "network" };
     } finally {
         clearTimeout(timer);
+        checkInFlight = false;       // освобождаем блокировку
         await applyPac();            // ВСЕГДА восстанавливаем нормальный PAC
     }
 }
@@ -353,6 +354,12 @@ async function applyPac() {
     }
     const userProxyString = `${proxyType} ${a.user_proxy_http || ""}:${a.user_proxy_port || ""};`;
 
+    // Списки доменов → trie. git-список хранится уже trie-объектом (gitTrie),
+    // пользовательские списки — массивы, строим trie на лету (обычно короткие).
+    const gitTrie = (a.useGitList && a.gitTrie) ? a.gitTrie
+        : (a.useGitList && Array.isArray(a.gitDomains)) ? buildTrieFromList(a.gitDomains)
+        : {};
+
     const pac = buildPac({
         userProxy: a.user_proxy ? true : false,
         userProxyString,
@@ -360,10 +367,10 @@ async function applyPac() {
         onlyProxy: a.onlyProxy ? true : false,
         addProxy: a.addProxy ? true : false,
         allProxy: a.allProxy ? true : false,
-        noProxyDomains: a.noProxyDomains || [],
-        onlyProxyDomains: a.onlyProxyDomains || [],
-        addProxyDomains: a.addProxyDomains || [],
-        gitDomains: (a.useGitList && Array.isArray(a.gitDomains)) ? a.gitDomains : []
+        noProxyTrie: buildTrieFromList(a.noProxyDomains),
+        onlyProxyTrie: buildTrieFromList(a.onlyProxyDomains),
+        addProxyTrie: buildTrieFromList(a.addProxyDomains),
+        gitTrie
     });
 
     const value = { mode: "pac_script", pacScript: { data: pac } };
@@ -507,8 +514,8 @@ function onMessage(msg, _sender, sendResponse) {
             sendResponse(result);
         } else if (msg?.apply === "listInfo") {
             // Текущее состояние списка для экрана «Управление».
-            const s = await get(["gitDomains", "dtime", "useGitList"]);
-            const count = Array.isArray(s.gitDomains) ? s.gitDomains.length : 0;
+            const s = await get(["gitDomainsCount", "dtime", "useGitList"]);
+            const count = s.gitDomainsCount || 0;
             sendResponse({ count, dtime: s.dtime || null, useGitList: !!s.useGitList });
         } else if (msg?.apply === "checkProxy") {
             // Проверка соединения конкретного прокси (PAC + fetch + откат).
@@ -572,11 +579,12 @@ async function initDefaults() {
         dtime: epochUTC(),
         start: Date.now(),
         uid: genUid(),
-        isEnabled: true,
+        isEnabled: false,            // выключен по умолчанию: без добавленного прокси пассивен
         icon: true,
         userDomains: false,
         useGitList: false,
-        gitDomains: [],
+        gitTrie: {},
+        gitDomainsCount: 0,
         noProxy: false,
         onlyProxy: false,
         addProxy: false,

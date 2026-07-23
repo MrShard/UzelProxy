@@ -12,12 +12,12 @@
     },
     "manifest_version": 3,
 	"minimum_chrome_version": "104.0.0.0",
-    "name": "UzelProxy - обход блокировки сайтов",
+    "name": "UzelProxy — менеджер личных прокси",
     "short_name": "UzelProxy",
-    "description": "Расширение позволяет беспрепятственно заходить на заблокированные сайты.",
-    "homepage_url": "https://example.com",
-    "permissions": ["proxy", "tabs", "webRequest", "storage", "unlimitedStorage", "alarms", "scripting"],
+    "description": "Гибкое управление собственными прокси: какие сайты идут через ваш прокси, какие — напрямую. Менеджер нескольких прокси, списки исключений, проверка соединения.",
+    "homepage_url": "https://github.com/MrShard/UzelProxy",
+    "permissions": ["proxy", "tabs", "storage", "unlimitedStorage", "alarms", "scripting"],
 	"host_permissions": ["<all_urls>"],
 	"optional_permissions": ["management"],
-    "version": "7.0.4"
+    "version": "8.0.0"
 }
