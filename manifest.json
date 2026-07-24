@@ -3,12 +3,19 @@
         "service_worker": "sw.js"
     },
     "action": {
-        "default_icon": "icon-enabled.png",
+        "default_icon": {
+            "16": "icon-16-on.png",
+            "32": "icon-32-on.png",
+            "48": "icon-48-on.png",
+            "128": "icon-128-on.png"
+        },
         "default_popup": "popup/popup.html"
     },
     "icons": {
-        "128": "icon-128-enabled.png",
-        "32": "icon-enabled.png"
+        "16": "icon-16-on.png",
+        "32": "icon-32-on.png",
+        "48": "icon-48-on.png",
+        "128": "icon-128-on.png"
     },
     "manifest_version": 3,
 	"minimum_chrome_version": "104.0.0.0",

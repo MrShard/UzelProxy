@@ -329,14 +329,14 @@ function parseTrace(text) {
 async function applyPac() {
     chrome.proxy.settings.clear({});
     if (!(await hasAllUrls())) {
-        setIcon("icon-128-disabled.png", "Выкл");
+        setIcon("icon-128-off.png", "Выкл");
         return true;
     }
     const a = await get();
 
     if (!a.isEnabled) {
         chrome.proxy.settings.clear({});
-        setIcon("icon-128-disabled.png", "Выкл");
+        setIcon("icon-128-off.png", "Выкл");
         return;
     }
 
@@ -384,14 +384,14 @@ async function applyPac() {
                 chrome.proxy.settings.set({ value });
             } else if (s.levelOfControl === "controlled_by_other_extensions") {
                 chrome.proxy.settings.clear({});
-                setIcon("icon-128-disabled.png", "err");
+                setIcon("icon-128-off.png", "err");
                 chrome.action.setBadgeText({ text: "err" });
                 chrome.action.setBadgeBackgroundColor({ color: "#f21a1a" });
             }
         });
     });
 
-    setIcon("icon-128-enabled.png", "Вкл");
+    setIcon("icon-128-on.png", "Вкл");
 }
 
 // ============================================================================
@@ -490,7 +490,7 @@ async function onStartup() {
     if (!perms.origins.contains("<all_urls>")) {
         openTab("common/error.html");
         chrome.action.disable();
-        setIcon("icon-128-disabled.png", "Выкл");
+        setIcon("icon-128-off.png", "Выкл");
         return;
     }
     fetchGitList();                  // при старте: кеш + недельное обновление
@@ -548,7 +548,7 @@ async function onPermissionRemoved(perms) {
         openTab("common/error.html");
         chrome.action.disable();
         await set({ isEnabled: false });
-        setIcon("icon-128-disabled.png", "Выкл");
+        setIcon("icon-128-off.png", "Выкл");
         applyPac();
     }
 }
@@ -559,7 +559,7 @@ async function onProxyChange(settings) {
     if (isEnabled && loc === "controlled_by_other_extensions") {
         chrome.proxy.settings.clear({});
         await disableConflictingExtensions();
-        setIcon("icon-128-disabled.png", "err");
+        setIcon("icon-128-off.png", "err");
         chrome.action.setBadgeText({ text: "err" });
         chrome.action.setBadgeBackgroundColor({ color: "#f21a1a" });
         return;

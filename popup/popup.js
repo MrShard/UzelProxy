@@ -27,7 +27,7 @@ async function renderActiveProxy(){
     }
 }
 
-async function o(){const{isEnabled:s,disableExtensions:o}=await a(["isEnabled","disableExtensions"]);chrome.runtime.sendMessage({apply:"err"},i=>{i.ext=="controlled_by_other_extensions"&&s?chrome.action.getBadgeText({},t=>{(t==="err"||t=="")&&!o&&(e("on_off_switcher").disabled=!0,e("control").style.display="none",e("share").style.display="none",e("noControl").style.display="block",r("../icon-128-disabled.png","err"))}):(e("on_off_switcher").disabled=!1,e("noControl").style.display="none",e("control").style.display="initial",e("share").style.display="table"),s?(t.checked=!0,n.style.animation="",n.style["box-shadow"]="inset 0px 0px 15px 10px rgb(34, 29, 136)"):(t.checked=!1,n.style.animation="stop",n.style["box-shadow"]="none")});renderActiveProxy()}
+async function o(){const{isEnabled:s,disableExtensions:o}=await a(["isEnabled","disableExtensions"]);chrome.runtime.sendMessage({apply:"err"},i=>{i.ext=="controlled_by_other_extensions"&&s?chrome.action.getBadgeText({},t=>{(t==="err"||t=="")&&!o&&(e("on_off_switcher").disabled=!0,e("control").style.display="none",e("share").style.display="none",e("noControl").style.display="block",r("../icon-128-off.png","err"))}):(e("on_off_switcher").disabled=!1,e("noControl").style.display="none",e("control").style.display="initial",e("share").style.display="table"),s?(t.checked=!0,n.style.animation="",n.style["box-shadow"]="inset 0px 0px 15px 10px rgb(34, 29, 136)"):(t.checked=!1,n.style.animation="stop",n.style["box-shadow"]="none")});renderActiveProxy()}
 
 async function c(){t.addEventListener("change",async()=>{
     // Защита: нельзя включить без активного прокси.
